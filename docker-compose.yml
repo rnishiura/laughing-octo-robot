@@ -1,0 +1,176 @@
+version: "3.7"
+
+services:
+  web-back:
+    container_name: python-backend
+    env_file: ./backend/web-back/.env
+    build: ./backend/web-back/.
+    volumes:
+      - ./backend/web-back:/code/
+      - static_volume:/code/staticfiles # <-- bind the static volume
+    stdin_open: true
+    tty: true
+    command: gunicorn --bind :8000 config.wsgi:application
+    networks:
+      - backend_network
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - DJANGO_SETTINGS_MODULE=config.local_settings
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend-server:
+    container_name: nginx_back
+    build:
+      context: ./backend/nginx/.
+      dockerfile: Dockerfile.dev
+    volumes:
+      - static_volume:/code/staticfiles # <-- bind the static volume
+    ports:
+      - "8080:80"
+    depends_on:
+      - web-back
+    networks:
+      - backend_network
+
+  db:
+    build: ./mysql
+    command: mysqld --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: todoList
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      TZ: "Asia/Tokyo"
+    volumes:
+      - ./mysql_volume:/var/lib/mysql
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - backend_network
+    healthcheck:
+      test: mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD
+      # test: ping 127.0.0.1 || exit 1
+
+  web-front:
+    image: node:18
+    volumes:
+      - ./frontend/web-front:/home/app/frontend
+    ports:
+      - 3000:3000
+    working_dir: /home/app/frontend
+    command:
+      [
+        bash,
+        -c,
+        yarn upgrade --no-progress --network-timeout 1000000 && yarn run dev,
+      ]
+    networks:
+      - frontend_network
+    healthcheck:
+      test: curl -f http://localhost/ || exit 1
+      interval: 1m30s
+      timeout: 30s
+      retries: 50
+      start_period: 30s
+
+  frontend-server:
+    container_name: nginx_frontend
+    build:
+      context: ./frontend/nginx/.
+      dockerfile: Dockerfile.dev
+    ports:
+      - "80:80"
+    depends_on:
+      # - web-front
+      web-front:
+        condition: service_healthy
+    networks:
+      - frontend_network
+
+  login-api:
+    build:
+      context: ./backend/login
+      dockerfile: ./Dockerfile
+    ports:
+      - 8081:80
+    volumes:
+      - ./backend/login/api:/go/src/api/
+    command: >
+      sh -c "air"
+    depends_on:
+      db:
+        condition: service_healthy
+      # login-mysql:
+      #   condition: service_healthy
+    # environment:
+    #   MYSQL_USER: admin
+    #   MYSQL_PASSWORD: admin
+    #   MYSQL_DATABASE: go_auth
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: todoList
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+      TZ: "Asia/Tokyo"
+    # links:
+    #   - "login-smtp"
+    tty: true
+    networks:
+      - backend_network
+
+  # login-mysql:
+  #   build:
+  #     context: ./backend/login/db
+  #     dockerfile: ./Dockerfile
+  #   platform: linux/x86_64
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: admin
+  #     MYSQL_USER: admin
+  #     MYSQL_PASSWORD: admin
+  #     MYSQL_DATABASE: go_auth
+  #   ports:
+  #     - "3307:3306"
+  #   volumes:
+  #     - ./backend/login/mysql/data:/var/lib/mysql
+  #     - ./backend/login/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+  #     - ./backend/login/mysql/sql:/docker-entrypoint-initdb.d
+  #   healthcheck:
+  #     test: mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD
+  # networks:
+  #   - backend_network
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    platform: linux/x86_64
+    environment:
+      - PMA_ARBITRARY=1
+      - PMA_HOST=db
+      - PMA_USER=user
+      - PMA_PASSWORD=password
+    links:
+      - db
+    ports:
+      - 8888:80
+    networks:
+      - backend_network
+
+  # login-smtp:
+  #   build:
+  #     context: ./backend/login
+  #   image: mailhog/mailhog
+  #   platform: linux/x86_64
+  #   # ports:
+  #   #   - "1025:1025"
+  #   #   - "8025:8025"
+  #   networks:
+  #     - backend_network
+
+networks:
+  backend_network:
+    driver: bridge
+  frontend_network:
+    driver: bridge
+volumes:
+  static_volume:

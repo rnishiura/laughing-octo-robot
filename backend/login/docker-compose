@@ -1,0 +1,68 @@
+version: "3"
+services:
+  api:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    ports:
+      - 80:80
+    volumes:
+      - ./api:/go/src/api/
+    command: >
+      sh -c "air"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+      MYSQL_DATABASE: go_auth
+    links:
+      - "smtp"
+    tty: true
+  # ui:
+  #   build:
+  #     context: .
+  #     dockerfile: ./docker/vue3/Dockerfile
+  #   ports:
+  #     - 8080:8080
+  #   volumes:
+  #     - ./ui:/app
+  #   command: npm run serve
+
+  mysql:
+    build: db
+    platform: linux/x86_64
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+      MYSQL_USER: admin
+      MYSQL_PASSWORD: admin
+      MYSQL_DATABASE: go_auth
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+      - ./mysql/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    platform: linux/x86_64
+    environment:
+      - PMA_ARBITRARY=1
+      - PMA_HOST=mysql
+      - PMA_USER=admin
+      - PMA_PASSWORD=admin
+    links:
+      - mysql
+    ports:
+      - 8888:80
+
+  smtp:
+    image: mailhog/mailhog
+    platform: linux/x86_64
+    ports:
+      - "1025:1025"
+      - "8025:8025"
